@@ -1,0 +1,197 @@
+# ==============================================================================
+# Workflow GitHub Actions pour le scraping automatique de Page Six
+# ==============================================================================
+name: RSS Scraper - Page Six vers Français
+
+on:
+  schedule:
+    - cron: '0 */4 * * *'
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.10'
+  PIP_NO_INPUT: 1
+  PIP_DEFAULT_TIMEOUT: 100
+  ACTIONS_RUNNER_FORCE_ACTIONS_NODE_VERSION: node24
+
+jobs:
+  scrape-and-translate:
+    name: Scrape, traduit et publie le flux RSS
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+
+    timeout-minutes: 15
+
+    steps:
+      - name: Récupération du code source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configuration Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Installation de Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+
+      - name: Installation des dépendances
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
+          pip list | grep -E "requests|lxml|feedgen|deep-translator|cloudscraper|python-dateutil"
+
+      - name: Vérification du script de scraping
+        run: |
+          echo "🔍 Vérification du fichier scraper_traducteur.py"
+          if [ -f "scraper_traducteur.py" ]; then
+            echo "✅ scraper_traducteur.py trouvé"
+            # Vérifier que les nouveaux sélecteurs sont présents
+            if grep -q "story__headline" scraper_traducteur.py; then
+              echo "✅ Nouveaux sélecteurs XPath détectés"
+            else
+              echo "⚠️ Attention: les nouveaux sélecteurs XPath ne sont pas présents"
+            fi
+          else
+            echo "❌ scraper_traducteur.py manquant"
+            exit 1
+          fi
+
+      - name: Exécution du scraper
+        id: scraping
+        run: |
+          echo "🚀 Début du scraping: $(date)"
+          echo "📡 Source: https://pagesix.com/"
+          echo "🔧 Utilisation des nouveaux sélecteurs XPath (story__*)"
+          python scraper_traducteur.py
+          echo "✅ Fin du scraping: $(date)"
+          
+          # Vérifications
+          if [ ! -f "feed.xml" ]; then
+            echo "❌ feed.xml non créé"
+            exit 1
+          fi
+          
+          # Compter les articles (même si le fichier est vide, grep renvoie 0)
+          ARTICLE_COUNT=$(grep -c "<item>" feed.xml || echo "0")
+          echo "📄 Nombre d'articles dans le feed: $ARTICLE_COUNT"
+          # Écrire la sortie avec une valeur par défaut
+          echo "article_count=$ARTICLE_COUNT" >> $GITHUB_OUTPUT
+          
+          echo "✅ feed.xml généré avec succès"
+          echo "📊 Taille: $(wc -c < feed.xml) octets"
+          
+          # Afficher les premiers articles pour vérification
+          if [ "$ARTICLE_COUNT" -gt 0 ]; then
+            echo "📰 Aperçu des titres:"
+            grep -o '<title>.*</title>' feed.xml | head -5 | sed 's/<title>//g' | sed 's/<\/title>//g' | sed 's/^/  - /'
+          fi
+
+      - name: Sauvegarde des fichiers générés (artefacts)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraping-results
+          path: |
+            feed.xml
+            articles.json
+            articles_cache.json
+            debug_page.html   # utile pour déboguer
+          retention-days: 7
+
+      - name: Sauvegarde du HTML de debug (si présent)
+        if: always()
+        run: |
+          if [ -f "debug_page.html" ]; then
+            echo "📄 HTML de debug sauvegardé (taille: $(wc -c < debug_page.html) octets)"
+            echo "🔍 Recherche des classes 'story__*' dans le HTML..."
+            grep -o 'story__[a-z]*' debug_page.html | sort -u || echo "Aucune classe 'story__' trouvée"
+          else
+            echo "⚠️ debug_page.html non trouvé"
+          fi
+
+      - name: Commit et push vers main (si articles > 0)
+        if: steps.scraping.outputs.article_count != '0'
+        run: |
+          git add feed.xml articles_cache.json 2>/dev/null || git add feed.xml
+          if git diff --staged --quiet; then
+            echo "✅ Aucun changement détecté"
+          else
+            git commit -m "🔄 Mise à jour RSS - $(date '+%Y-%m-%d %H:%M') - ${{ steps.scraping.outputs.article_count }} articles"
+            git push origin main
+          fi
+
+      - name: Publication sur GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: .
+          publish_branch: gh-pages
+          commit_message: "🔄 Déploiement CDN Pages - ${GITHUB_RUN_ID}"
+          force_orphan: true
+          keep_files: false
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Résumé de l'exécution
+        if: always()
+        run: |
+          echo "### 📊 Résumé du scraping" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Métrique | Valeur |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 📅 Date | $(date) |" >> $GITHUB_STEP_SUMMARY
+          echo "| ✅ Statut | ${{ job.status }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📄 Articles | ${{ steps.scraping.outputs.article_count || '0' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔗 URL | https://buzzplus225.github.io/sixpage.github.io/feed.xml |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏷️ Sélecteurs | story__* (nouveaux) |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f "feed.xml" ] && [ -s "feed.xml" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 📝 Extrait du flux généré" >> $GITHUB_STEP_SUMMARY
+            echo '```xml' >> $GITHUB_STEP_SUMMARY
+            head -30 feed.xml >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            
+            # Afficher les titres traduits
+            if [ "${{ steps.scraping.outputs.article_count }}" -gt 0 ]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### 📰 Derniers articles traduits" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              grep -o '<title>.*</title>' feed.xml | head -5 | sed 's/<title>//g' | sed 's/<\/title>//g' | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+          # Afficher les informations sur les classes détectées
+          if [ -f "debug_page.html" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔍 Classes 'story__' détectées" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -o 'story__[a-z_]*' debug_page.html | sort -u | head -20 >> $GITHUB_STEP_SUMMARY || echo "Aucune classe story__ trouvée" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Notification d'échec (seulement si le job échoue)
+        if: failure()
+        run: |
+          echo "### ❌ Échec du scraping" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Le scraping a échoué. Vérifiez les logs ci-dessus." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Causes possibles :**" >> $GITHUB_STEP_SUMMARY
+          echo "- Site inaccessible (blocage Cloudflare)" >> $GITHUB_STEP_SUMMARY
+          echo "- Structure HTML modifiée (classes `story__*` changées)" >> $GITHUB_STEP_SUMMARY
+          echo "- Problème de traduction Google" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📄 Consultez `debug_page.html` dans les artefacts pour analyser la structure HTML." >> $GITHUB_STEP_SUMMARY
