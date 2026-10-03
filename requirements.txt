@@ -1,0 +1,46 @@
+# ==============================================================================
+# Dépendances pour le scraper et traducteur automatique (Page Six)
+# ==============================================================================
+
+# --- Web Scraping & Parsing ---
+cloudscraper>=1.2.71
+# Cloudscraper : Contourne Cloudflare / protections anti-bot
+
+beautifulsoup4>=4.12.0
+# BeautifulSoup4 : Parsing HTML (fallback si lxml pose problème)
+
+lxml>=4.9.0
+# lxml : Parseur HTML/XML rapide pour XPath
+
+requests>=2.31.0
+# Requests : Client HTTP pour récupérer les pages
+
+# --- Génération de flux RSS ---
+feedgen>=0.9.0
+# Feedgen : Génère le fichier feed.xml au format RSS
+
+# --- Traduction automatique ---
+deep-translator>=1.11.4
+# deep-translator : Traduction anglais → français (Google Translate)
+
+# --- Utilitaires ---
+python-dateutil>=2.8.2
+# python-dateutil : Parsing avancé des dates de publication
+
+# ==============================================================================
+# Notes importantes:
+# ==============================================================================
+# ✅ Toutes les dépendances sont compatibles avec Python 3.10+
+# ✅ Le scraper utilise des sélecteurs XPath spécifiques à Page Six :
+#    - Conteneur : //div[contains(@class, 'story')]
+#    - Titre     : .//*[contains(@class, 'story__headline')]/a
+#    - Image     : .//div[contains(@class, 'story__image')]//img/@src
+#    - Description: .//*[contains(@class, 'story__excerpt')]
+#    - Date      : .//time/@datetime
+# 
+# 📦 Installation rapide :
+#    pip install -r requirements.txt
+# 
+# 🚀 Exécution :
+#    python scraper_traducteur.py
+# ==============================================================================
