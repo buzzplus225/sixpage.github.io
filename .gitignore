@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+pythonenv*
+
+# Distribution
+dist/
+build/
+*.egg-info/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Modèles de traduction
+models/
+.cache/
+
+# Fichiers temporaires
+*.tmp
+*.temp
+.DS_Store
+
+# Fichiers de données
+*.db
+*.sqlite
